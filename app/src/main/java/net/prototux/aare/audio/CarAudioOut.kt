@@ -99,6 +99,12 @@ class CarAudioOut(
         var died = false
         // Build up a lead before feeding the car (again): see PRIME_MS.
         var priming = true
+        // Connection-log diagnostics: whether the capture ever hears anything, and focus waits.
+        val loopStartMs = SystemClock.elapsedRealtime()
+        var soundLogged = false
+        var silenceLogged = false
+        var focusWaitSinceMs = 0L
+        var focusWaitLogged = false
         fun queue(ts: Long) {
             queued.addLast(buf.copyOf() to ts)
             while (queued.size > queueLimit) queued.removeFirst()
@@ -116,6 +122,15 @@ class CarAudioOut(
                 noteAckMode()
                 val now = SystemClock.elapsedRealtime()
                 if (!isSilent(buf, 10, chunk)) lastSound = now
+                if (lastSound == now && !soundLogged) {
+                    soundLogged = true
+                    DiagLog.add("car audio ($label): capturing sound from the phone")
+                } else if (!soundLogged && !silenceLogged && channel.streamType == AudioStreamType.AUDIO_STREAM_MEDIA &&
+                    now - loopStartMs > SILENCE_REPORT_MS) {
+                    silenceLogged = true
+                    DiagLog.add("car audio ($label): only silence captured for ${SILENCE_REPORT_MS / 1000} s: if music is " +
+                        "playing, its sound isn't reaching AARE (and keeps playing on the phone)")
+                }
                 val ts = clockStartUs + frames * 1_000_000L / rate
                 frames += chunk / (2 * channels)
                 if (!playing && lastSound == now) {
@@ -133,7 +148,15 @@ class CarAudioOut(
                 if (!playing) continue
                 if (!channel.started) {
                     // Keep the sound until the car grants focus, then open the stream.
-                    if (!focus.granted) { queue(ts); continue }
+                    if (!focus.granted) {
+                        if (focusWaitSinceMs == 0L) focusWaitSinceMs = now
+                        if (!focusWaitLogged && now - focusWaitSinceMs > FOCUS_REPORT_MS) {
+                            focusWaitLogged = true
+                            DiagLog.add("car audio ($label): the car hasn't granted audio focus after ${FOCUS_REPORT_MS / 1000} s; holding the sound")
+                        }
+                        queue(ts); continue
+                    }
+                    focusWaitSinceMs = 0L
                     channel.startPlayback()
                     if (!channel.started) { queue(ts); continue }
                     startedAtMs = now; maxQueued = queued.size; focusDropped = 0; underflowsAtStart = channel.underflows
@@ -228,6 +251,9 @@ class CarAudioOut(
     companion object {
         private const val TAG = "AareAudioOut"
         private const val SILENCE_MS = 3_000L
+        /** Connection-log diagnostics: a media capture that hears nothing, a focus grant that doesn't come. */
+        private const val SILENCE_REPORT_MS = 20_000L
+        private const val FOCUS_REPORT_MS = 3_000L
         /** Sound kept while waiting for the car's focus grant. */
         private const val MAX_QUEUED_MS = 1_000
         /** Backlog kept once media plays. */

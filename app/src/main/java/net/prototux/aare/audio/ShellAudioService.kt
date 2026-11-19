@@ -32,6 +32,8 @@ import kotlin.system.exitProcess
 class ShellAudioService : IShellAudio.Stub {
     private val context: Context?
     @Volatile private var record: AudioRecord? = null
+    /** Why the last capture failed (see [lastError]). */
+    @Volatile private var failure: String? = null
     private var pump: Thread? = null
 
     constructor() : this(null)
@@ -45,13 +47,14 @@ class ShellAudioService : IShellAudio.Stub {
     @SuppressLint("MissingPermission", "WrongConstant")
     override fun start(sampleRate: Int, channels: Int): ParcelFileDescriptor? {
         stop()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
+        failure = null
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) { failure = "needs Android 12"; return null }
         // Shizuku runs this as the shell (2000), which holds CAPTURE_AUDIO_OUTPUT; the su helper
         // (SuAudioMain via app_process) runs as uid 0, which doesn't — the permission is checked
         // against the recording uid, and being root isn't enough. Drop to the shell uid (gid before
         // uid; once dropped we can't go back, which is fine: we only record audio from here on).
         if (Process.myUid() == 0) runCatching { Os.setgid(SHELL_UID); Os.setuid(SHELL_UID) }
-            .onFailure { Log.w(TAG, "could not drop to the shell uid", it); return null }
+            .onFailure { Log.w(TAG, "could not drop to the shell uid", it); failure = "could not drop to the shell uid: ${describe(it)}"; return null }
         return try {
             val format = AudioFormat.Builder()
                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
@@ -89,6 +92,7 @@ class ShellAudioService : IShellAudio.Stub {
             read
         } catch (e: Exception) {
             Log.w(TAG, "remote submix capture failed", e)
+            failure = "remote submix capture: ${describe(e)}"
             stop()
             null
         }
@@ -104,6 +108,7 @@ class ShellAudioService : IShellAudio.Stub {
 
     override fun startPolicy(key: Int, sampleRate: Int, channels: Int, usages: IntArray): ParcelFileDescriptor? = asShell { synchronized(policies) {
         stopPolicyLocked(key)
+        failure = null
         try {
             val ctx = ShellContext(context ?: systemContext())
             val handle = AudioPolicyCapture.open(ctx, shellAudioManager(ctx), usages, sampleRate, channels, policyLooper, recordContext = ctx)
@@ -134,9 +139,12 @@ class ShellAudioService : IShellAudio.Stub {
             read
         } catch (e: Throwable) {
             Log.w(TAG, "audio policy as the shell failed", e)
+            failure = "audio policy: ${describe(e)}"
             null
         }
     } }
+
+    override fun lastError(): String? = failure
 
     override fun stopPolicy(key: Int) = asShell { synchronized(policies) { stopPolicyLocked(key) } }
 
@@ -203,6 +211,13 @@ class ShellAudioService : IShellAudio.Stub {
 
     private companion object {
         const val TAG = "AareShellAudio"
+
+        /** An exception and its root cause, in one line (reflection wraps the real error). */
+        fun describe(e: Throwable): String {
+            var root = e
+            while (root.cause != null && root.cause !== root) root = root.cause!!
+            return if (root === e) e.toString() else "$e, caused by $root"
+        }
         const val SHELL_PACKAGE = "com.android.shell"
         const val SHELL_UID = 2000
     }

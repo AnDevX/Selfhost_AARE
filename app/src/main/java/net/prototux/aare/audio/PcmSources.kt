@@ -22,6 +22,7 @@ import java.io.InputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import net.prototux.aare.BuildConfig
+import net.prototux.aare.DiagLog
 import net.prototux.aare.R
 import net.prototux.aare.Settings
 import org.lsposed.hiddenapibypass.HiddenApiBypass
@@ -210,6 +211,7 @@ class AudioPolicySource(
         true
     } catch (e: Throwable) {
         Log.w(TAG, "audio policy capture unavailable", e)
+        DiagLog.add("car audio: system audio routing refused: ${e.cause ?: e}")
         release()
         false
     }
@@ -291,10 +293,20 @@ abstract class ShellPipeSource(private val context: Context) : PcmSource {
     protected abstract fun close(service: IShellAudio)
 
     override fun start(): Boolean {
-        val s = ShellAudio.acquire(context) ?: return false
+        val s = ShellAudio.acquire(context) ?: run {
+            DiagLog.add("car audio: couldn't start AARE's Shizuku audio helper (is Shizuku running and AARE allowed?)")
+            return false
+        }
         service = s
-        val pfd = runCatching { open(s) }.onFailure { Log.w(TAG, "Shizuku capture", it) }.getOrNull()
-        if (pfd == null) { release(); return false }
+        val pfd = runCatching { open(s) }.onFailure {
+            Log.w(TAG, "Shizuku capture", it)
+            DiagLog.add("car audio: Shizuku audio helper call failed: $it")
+        }.getOrNull()
+        if (pfd == null) {
+            val why = runCatching { s.lastError() }.getOrNull()
+            if (why != null) DiagLog.add("car audio: Shizuku audio helper refused: $why")
+            release(); return false
+        }
         stream = ParcelFileDescriptor.AutoCloseInputStream(pfd)
         return true
     }

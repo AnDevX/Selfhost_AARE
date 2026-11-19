@@ -52,6 +52,7 @@ import java.io.IOException
 import java.io.OutputStream
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.atomic.AtomicBoolean
+import net.prototux.aare.DiagLog
 import net.prototux.aare.R
 import net.prototux.aare.car.CarData
 
@@ -390,6 +391,7 @@ class CarAppConnection(
 
     private fun fail(message: String) {
         Log.w(TAG, "${info.packageName}: $message")
+        DiagLog.add("car app ${info.label} (${info.packageName}): $message")
         cleanup()
         unbind()
         status = Status.FAILED
@@ -447,6 +449,7 @@ class CarAppConnection(
 
     private fun onFailure(call: String, message: String) {
         Log.w(TAG, "${info.packageName}.$call failed: ${message.lineSequence().firstOrNull()}")
+        DiagLog.add("car app ${info.packageName}.$call failed: ${message.lineSequence().firstOrNull()?.take(200)}")
         if (status == Status.CONNECTING) {
             fail(when {
                 "Unknown host" in message || "not allowed" in message || "SecurityException" in message ->

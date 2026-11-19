@@ -19,6 +19,9 @@ interface IShellAudio {
 
     void stopPolicy(int key) = 4;
 
+    /** Why the last start() or startPolicy() returned null, for AARE's connection log; null if none. */
+    String lastError() = 5;
+
     /** Shizuku's user-service teardown call. */
     void destroy() = 16777114;
 }

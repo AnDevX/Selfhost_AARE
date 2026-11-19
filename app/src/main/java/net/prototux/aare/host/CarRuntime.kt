@@ -449,8 +449,11 @@ class CarRuntime(
             val nav = entries.filter { it.kind == CarAppKind.NAVIGATION && it.id !in finished }
             ui.activeNavAppId = (nav.firstOrNull { it.packageName == settings.lastNavApp } ?: nav.singleOrNull())?.id
         }
+        // As for navigation: with no media app used in the car yet, the only one there is, so the
+        // music button opens it rather than the launcher.
         if (ui.activeMediaAppId == null) {
-            ui.activeMediaAppId = entries.firstOrNull { it.kind == CarAppKind.MEDIA && it.packageName == settings.lastMediaApp }?.id
+            val media = entries.filter { it.kind == CarAppKind.MEDIA }
+            ui.activeMediaAppId = (media.firstOrNull { it.packageName == settings.lastMediaApp } ?: media.singleOrNull())?.id
         }
     }
 
